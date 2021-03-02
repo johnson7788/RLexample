@@ -1,6 +1,5 @@
 import gym
 import argparse
-## random agent
 class RandomAgent(object):
     def __init__(self, action_space):
         self.action_space = action_space
@@ -17,9 +16,7 @@ class BiasedAgent(object):
 
 
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser()
-    parser.add_argument('--display', action='store_true')
     parser.add_argument('game', nargs="?", default="CartPole-v0")
     args = parser.parse_args()
 

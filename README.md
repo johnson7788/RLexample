@@ -1,9 +1,9 @@
-# Some basic examples for reinforcement learning
+# 强化学习的简单示例
 
 ## Installing Anaconda and OpenAI gym
 
 * Download and install Anaconda [here](https://www.anaconda.com/download)
-* Install OpenAI gym
+* Install OpenAI gym, 下面2个都要安装 
 ```
 pip install gym
 pip install gym[atari]
@@ -11,7 +11,7 @@ pip install gym[atari]
 
 ## Examples
 
-* Play with the environment
+* gym的环境操作示例
 ```
 import gym
 env = gym.make('CartPole-v0')
@@ -22,7 +22,7 @@ for _ in range(1000):
 env.close()
 ```
 
-* Random play with ```CartPole-v0```
+* 随机示例 ```CartPole-v0```
 
 ```
 import gym
@@ -37,20 +37,22 @@ for i_episode in range(20):
 env.close()
 ```
 
-* Example code for random playing (```Pong-ram-v0```,```Acrobot-v1```,```Breakout-v0```)
+* 随机示例 (```Pong-ram-v0```,```Acrobot-v1```,```Breakout-v0```)
 
 ```
 python my_random_agent.py Pong-ram-v0
 ```
 
-* Very naive learnable agent playing ```CartPole-v0``` or ```Acrobot-v1```
+* 非常简单的智能体示例 ```CartPole-v0``` or ```Acrobot-v1```
 
 ```
 python my_learning_agent.py CartPole-v0
 
 ```
 
-* Playing Pong on CPU (with a great [blog](http://karpathy.github.io/2016/05/31/rl/)). One pretrained model is ```pong_model_bolei.p```(after training 20,000 episodes), which you can load in by replacing [save_file](https://github.com/metalbubble/RLexample/blob/master/pg-pong.py#L15) in the script. 
+* 使用CPU玩乒乓球游戏 (with a great [blog](http://karpathy.github.io/2016/05/31/rl/)). 
+使用预训练模型 ```pong_model_bolei.p```(经过 20,000 回合的训练), 
+使用pg-pong.py文件加载 [save_file](https://github.com/metalbubble/RLexample/blob/master/pg-pong.py#L15) in the script. 
 
 ```
 python pg-pong.py

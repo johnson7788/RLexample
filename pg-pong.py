@@ -1,17 +1,17 @@
 # From http://karpathy.github.io/2016/05/31/rl/
-""" Trains an agent with (stochastic) Policy Gradients on Pong. Uses OpenAI Gym. """
+""" 在Pong上训练具有（随机）策略梯度的agents。 使用OpenAI Gym。 """
 import numpy as np
 import pickle
 import gym
 
 # hyperparameters
-H = 200 # number of hidden layer neurons
-batch_size = 10 # every how many episodes to do a param update?
+H = 200 # 隐层神经元数
+batch_size = 10 # 每有几个回合可以进行参数更新？
 learning_rate = 1e-4
-gamma = 0.99 # discount factor for reward
-decay_rate = 0.99 # decay factor for RMSProp leaky sum of grad^2
-resume = True # resume from previous checkpoint?
-test = True # test mode, turn off epsilon-greedy and render the scene
+gamma = 0.99 # 奖励折扣系数
+decay_rate = 0.99 #  衰减因子 RMSProp leaky sum of grad^2
+resume = True # 从先前的checkpoint恢复？
+test = True # 测试模式，闭市epsilon-greedy和渲染场景图画
 save_file = 'pong_model_bolei.p'
 
 if test == True:
@@ -19,7 +19,7 @@ if test == True:
 else:
     render = False
 
-# model initialization
+#模型初始化
 D = 80 * 80 # input dimensionality: 80x80 grid
 if resume:
   model = pickle.load(open(save_file, 'rb'))
@@ -28,7 +28,7 @@ else:
   model['W1'] = np.random.randn(H,D) / np.sqrt(D) # "Xavier" initialization
   model['W2'] = np.random.randn(H) / np.sqrt(H)
 
-grad_buffer = { k : np.zeros_like(v) for k,v in model.items() } # update buffers that add up gradients over a batch
+grad_buffer = { k : np.zeros_like(v) for k,v in model.items() } # 更新在一个批次中添加梯度的缓冲区
 rmsprop_cache = { k : np.zeros_like(v) for k,v in model.items() } # rmsprop memory
 
 def sigmoid(x):
@@ -44,7 +44,7 @@ def prepro(I):
   return I.astype(np.float).ravel()
 
 def discount_rewards(r):
-  """ take 1D float array of rewards and compute discounted reward """
+  """ 采取一维浮动奖励数组并计算折扣奖励 """
   discounted_r = np.zeros_like(r)
   running_add = 0
   for t in reversed(range(0, r.size)):
