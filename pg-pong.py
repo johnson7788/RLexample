@@ -11,7 +11,7 @@ learning_rate = 1e-4
 gamma = 0.99 # 奖励折扣系数
 decay_rate = 0.99 #  衰减因子 RMSProp leaky sum of grad^2
 resume = True # 从先前的checkpoint恢复？
-test = True # 测试模式，闭市epsilon-greedy和渲染场景图画
+test = True # 测试模式，闭市epsilon-greedy和渲染场景图画, 还是训练模式
 save_file = 'pong_model_bolei.p'
 
 if test == True:
@@ -35,30 +35,58 @@ def sigmoid(x):
   return 1.0 / (1.0 + np.exp(-x)) # sigmoid "squashing" function to interval [0,1]
 
 def prepro(I):
-  """ prepro 210x160x3 uint8 frame into 6400 (80x80) 1D float vector """
-  I = I[35:195] # crop
-  I = I[::2,::2,0] # downsample by factor of 2
-  I[I == 144] = 0 # erase background (background type 1)
-  I[I == 109] = 0 # erase background (background type 2)
-  I[I != 0] = 1 # everything else (paddles, ball) just set to 1
-  return I.astype(np.float).ravel()
+  """
+  接收图像，并处理图像，下采样并过滤出乒乓球和球拍的位置
+  接收形状为, [Height, weight, RGB],  210x160x3的输出的图像画面， uint8 frame into 6400 (80x80) 1D float vector
+  :param I:
+  :return:
+  """
+  #裁剪高度，195-35=160, 取高度中间的160, 那样记分框就不会被截取到了，得到的形状是 [160,160,3]
+  I = I[35:195]
+  #下采样，高和宽，步长为2采样一个像素，只取R通道，形状变为 [80,80]
+  I = I[::2,::2,0]
+  #消除背景色，值等于144和109的都置为0，那么乒乓球和球拍的位置就显示出来了
+  I[I == 144] = 0
+  I[I == 109] = 0
+  #把乒乓球和球拍的设为1，
+  I[I != 0] = 1
+  #压测成1维, 80x 80-->6400, 变成浮点数
+  f = I.astype(np.float).ravel()
+  return f
 
 def discount_rewards(r):
-  """ 采取一维浮动奖励数组并计算折扣奖励 """
+  """
+  采取一维浮动奖励数组并计算折扣奖励
+  :param r: 一个回合的所有奖励， shape， (5746, 1)这里的5746是不确定的，因为不知道进行了多少次接收图像，然后后进行一次动作，
+  这里是接收了5746次状态，进行了5746动作，然后游戏结束，或者我方式21分，或者对方是21分
+  :return:
+  """
+  #初始化一个折扣,全为0的，形状和输入r一样的形状
   discounted_r = np.zeros_like(r)
   running_add = 0
   for t in reversed(range(0, r.size)):
-    if r[t] != 0: running_add = 0 # reset the sum, since this was a game boundary (pong specific!)
+    if r[t] != 0:
+      # 重置总和，因为这是游戏边界（特定于乒乓球游戏！）
+      running_add = 0 #
+    # 计算出奖励
     running_add = running_add * gamma + r[t]
+    #第t个位置的奖励折扣
     discounted_r[t] = running_add
   return discounted_r
 
 def policy_forward(x):
+  """
+  根据收到的变化的x的状态，计算概率和隐藏神经元
+  :param x: (6400,)
+  :return:
+  """
   h = np.dot(model['W1'], x)
-  h[h<0] = 0 # ReLU nonlinearity
+  # Relu激活函数的非线性
+  h[h<0] = 0
   logp = np.dot(model['W2'], h)
   p = sigmoid(logp)
-  return p, h # return probability of taking action 2, and hidden state
+  #采取行动2的返回概率，以及隐藏状态
+  return p, h
 
 def policy_backward(eph, epdlogp):
   """ backward pass. (eph is array of intermediate hidden states) """
@@ -69,52 +97,84 @@ def policy_backward(eph, epdlogp):
   return {'W1':dW1, 'W2':dW2}
 
 env = gym.make("Pong-v0")
+# 即整个动画的画面，这里是 Box(0, 255, (210, 160, 3), uint8)，
+print('观测空间 = {}'.format(env.observation_space))
+# 可以采取的动作是6个, Discrete(6)
+print('动作空间 = {}'.format(env.action_space))
+# 0到255个像素的图画，low是全为0，(210, 160, 3), high全为255，(210, 160, 3),
+print('观测范围 = {} ~ {}'.format(env.observation_space.low,
+                              env.observation_space.high))
+#动作数是6
+print('动作数 = {}'.format(env.action_space.n))
 observation = env.reset()
 prev_x = None # used in computing the difference frame
 xs,hs,dlogps,drs = [],[],[],[]
 running_reward = None
 reward_sum = 0
 episode_number = 0
+#这一小的回合接收了多少次参数
+ober_num = 0
+# 记录下当前乒乓球的分数，我方的分数, 和对方的分数
+myscore = 0
+comscore = 0
 while True:
-  if render: env.render()
-
-  # preprocess the observation, set input to network to be difference image
+  if render:
+    # 显示画面
+    env.render()
+  ober_num += 1
+  # 对观测值进行预处理，将网络输入设置为不同图像, 即环境状态state， observation是原始画面
   cur_x = prepro(observation)
+  # 经过简单处理后的的环境状态cur_x，x是变化的画面的状态
   x = cur_x - prev_x if prev_x is not None else np.zeros(D)
+  #记录一下上一个状态
   prev_x = cur_x
 
-  # forward the policy network and sample an action from the returned probability
+  #前向策略网络并根据返回的概率对操作进行采样
   aprob, h = policy_forward(x)
+  #根据计算得出的概率，判断我们要采取的行动
   if test == True:
     action = 2 if aprob>0.5 else 3
   else:
+    #如果不是测试，是训练，那么我们加入一个随机数，即探索和利用中的探索的概念
     action = 2 if np.random.uniform() < aprob else 3 # roll the dice!
 
-  # record various intermediates (needed later for backprop)
-  xs.append(x) # observation
-  hs.append(h) # hidden state
+  # 记录各种中间状态，需要反向传播
+  #观察状态 observation
+  xs.append(x)
+  #隐藏状态
+  hs.append(h)
+  #定义一个label
   y = 1 if action == 2 else 0 # a "fake label"
+  #记录下采取行的的概率
   dlogps.append(y - aprob) # grad that encourages the action that was taken to be taken (see http://cs231n.github.io/neural-networks-2/#losses if confused)
 
-  # step the environment and get new measurements
+  # 把下一步要采取的行动提交给环境，例如这里action是3， 然后得到奖励和环境的观察结果
   observation, reward, done, info = env.step(action)
+  # 累积奖励
   reward_sum += reward
-
-  drs.append(reward) # record reward (has to be done after we call step() to get reward for previous action)
-
-  if done: # an episode finished
+  #累积奖励记录下, 记录奖励
+  drs.append(reward)
+  #整个游戏，即一次游戏结束，谁先达到21分，谁胜利
+  if done:
     episode_number += 1
-
-    # stack together all inputs, hidden states, action gradients, and rewards for this episode
+    # 将本局的所有输入，隐藏状态，动作梯度和奖励堆叠在一起， 所有的形状是不同的
+    #所有的输入状态， shape, (5896, 6400)，  (8641, 6400)
     epx = np.vstack(xs)
+    #所有的隐藏状态, shape, (5896, 200)
     eph = np.vstack(hs)
+    #所有的logits, shape (5896, 1)
     epdlogp = np.vstack(dlogps)
+    #所有的奖励, (5896, 1),   (8641, 1)
     epr = np.vstack(drs)
+    print(f"第{episode_number}回合的分数是: 我方总的奖励分数是{int(21+np.sum(epr))}分, 当前我方分数是{myscore},对方分数是{comscore}")
+    #重置下分数
+    myscore, comscore = 0, 0
+    #重置这一回合的累积的变量
     xs,hs,dlogps,drs = [],[],[],[] # reset array memory
 
-    # compute the discounted reward backwards through time
+    #反向传播计算折价奖励
     discounted_epr = discount_rewards(epr)
-    # standardize the rewards to be unit normal (helps control the gradient estimator variance)
+    #归一化， 将奖励标准化为unit normal（帮助控制梯度估计量方差)
     discounted_epr -= np.mean(discounted_epr)
     discounted_epr /= np.std(discounted_epr)
 
@@ -138,5 +198,13 @@ while True:
     observation = env.reset() # reset env
     prev_x = None
 
+  #reward 不等于0，这里等于1或-1，表示得了1分或者输掉1分，游戏结束了， 一个小的回合
   if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
-    print ('ep %d: game finished, reward: %f' % (episode_number, reward)) , ('' if reward == -1 else ' !!!!!!!!')
+    if reward == -1:
+      #对方+1分
+      comscore +=1
+    else:
+      myscore += 1
+    print (f"第{episode_number}个大回合,第{myscore+comscore}次小回合，进行了{ober_num}次输入图像,分出了小的回合胜负, 奖励是: {reward}, 当前我方分数是{myscore},对方分数是{comscore}")
+    #重置下这个小的回合的接收图像次数
+    ober_num = 0
