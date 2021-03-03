@@ -124,6 +124,8 @@ def initial_env():
 
 
 def do_train():
+    grad_buffer = {k: np.zeros_like(v) for k, v in model.items()}  # 更新在一个批次中添加梯度的缓冲区
+    rmsprop_cache = {k: np.zeros_like(v) for k, v in model.items()}  # rmsprop memory
     observation = env.reset()
     #存储上一个frame的状态x
     prev_x = None
@@ -243,25 +245,52 @@ def do_train():
                     ober_num = 0
 
 def do_test():
+    """
+    测试一局游戏，谁先到21分，谁赢
+    :return:
+    """
+    #一局游戏的初始为False
+    done = False
     observation = env.reset()
-    #存储上一个frame的状态x
-    prev_x = None
-    # 这一小的回合接收了多少次参数
+    # 记录下当前乒乓球的分数，我方的分数, 和对方的分数
+    myscore = 0
+    comscore = 0
     ober_num = 0
-    if render:
-        # 显示画面
-        env.render()
-    ober_num += 1
-    # 对观测值进行预处理，将网络输入设置为不同图像, 即环境状态state， observation是原始画面
-    cur_x = observation_extract(observation)
-    # 经过简单处理后的的环境状态cur_x，x是变化的画面的状态
-    x = cur_x - prev_x if prev_x is not None else np.zeros(D)
-    # 记录一下上一个状态
-    prev_x = cur_x
-    aprob, h = policy_forward(x)
-    # 根据计算得出的概率，判断我们要采取的行动
-    if test == True:
+    prev_x = None
+    while not done:
+        #回合结束
+        #存储上一个frame的状态x
+        # 记录一个小的回合打了多少次
+        # 这一小的回合接收了多少次参数
+        if render:
+            # 显示画面
+            env.render()
+        ober_num += 1
+        # 对观测值进行预处理，将网络输入设置为不同图像, 即环境状态state， observation是原始画面
+        cur_x = observation_extract(observation)
+        # 经过简单处理后的的环境状态cur_x，x是变化的画面的状态
+        x = cur_x - prev_x if prev_x is not None else np.zeros(D)
+        # 记录一下上一个状态
+        prev_x = cur_x
+        aprob, h = policy_forward(x)
+        # 根据计算得出的概率，判断我们要采取的行动
         action = 2 if aprob > 0.5 else 3
+        observation, reward, done, info = env.step(action)
+        if reward != 0:
+            if reward == -1:
+                # 对方+1分
+                comscore += 1
+            else:
+                myscore += 1
+            print(
+                f"第{myscore + comscore}次小回合，进行了{ober_num}次输入图像,分出了小的回合胜负, 奖励是: {reward}, 当前我方分数是{myscore},对方分数是{comscore}")
+            # 重置下这个小的回合的接收图像次数
+            ober_num = 0
+    if myscore > comscore:
+        print(f"我赢了")
+    else:
+        print(f"电脑赢了")
+
 
 if __name__ == '__main__':
     # 超参数列表
@@ -277,7 +306,9 @@ if __name__ == '__main__':
     save_file = 'pong_model_bolei.p'
     render = True  # 是否显示游戏的图像界面
     model = initial_model(save_file, resume)
-    grad_buffer = {k: np.zeros_like(v) for k, v in model.items()}  # 更新在一个批次中添加梯度的缓冲区
-    rmsprop_cache = {k: np.zeros_like(v) for k, v in model.items()}  # rmsprop memory
+    
     env = initial_env()
-    do_train()
+    if test:
+        do_test()
+    else:
+        do_train()
