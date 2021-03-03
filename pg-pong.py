@@ -109,142 +109,152 @@ def policy_backward(eph, epdlogp, epx):
     return grad
 
 
-def initial_env():
-    env = gym.make("Pong-v0")
-    # 即整个动画的画面，这里是 Box(0, 255, (210, 160, 3), uint8)，
-    print('观测空间 = {}'.format(env.observation_space))
-    # 可以采取的动作是6个, Discrete(6)
-    print('动作空间 = {}'.format(env.action_space))
-    # 0到255个像素的图画，low是全为0，(210, 160, 3), high全为255，(210, 160, 3),
-    print('观测范围 = {} ~ {}'.format(env.observation_space.low,
-                                  env.observation_space.high))
-    # 动作数是6
-    print('动作数 = {}'.format(env.action_space.n))
+def initial_env(game="Pong-v0", verbose=False):
+    """
+    Pong-v0介绍： https://gym.openai.com/envs/Pong-v0/
+    :return:
+    """
+    env = gym.make(game)
+    if verbose:
+        print(f"游戏环境初始化完成: {game}")
+        # 即整个动画的画面，这里是 Box(0, 255, (210, 160, 3), uint8)，
+        print('观测空间 = {}'.format(env.observation_space))
+        # 可以采取的动作是6个, Discrete(6)
+        print('动作空间 = {}'.format(env.action_space))
+        # 0到255个像素的图画，low是全为0，(210, 160, 3), high全为255，(210, 160, 3),
+        print('观测范围 = {} ~ {}'.format(env.observation_space.low,
+                                      env.observation_space.high))
+        # 动作数是6
+        print('动作数 = {}'.format(env.action_space.n))
+        #这里有意义的动作只有Right和Left，即对应2和3
+        print(f'动作的意义是: {env.get_action_meanings()}')
     return env
 
-
-def do_train():
-    grad_buffer = {k: np.zeros_like(v) for k, v in model.items()}  # 更新在一个批次中添加梯度的缓冲区
-    rmsprop_cache = {k: np.zeros_like(v) for k, v in model.items()}  # rmsprop memory
-    observation = env.reset()
-    #存储上一个frame的状态x
-    prev_x = None
-    xs, hs, dlogps, drs = [], [], [], []
-    running_reward = None
-    reward_sum = 0
-    episode_number = 0
-    # 这一小的回合接收了多少次参数
-    ober_num = 0
+def do_one_game(observation, verbose=False):
+    """
+    进行一局游戏
+    :return:
+    """
+    # 一局结束
+    done = False
     # 记录下当前乒乓球的分数，我方的分数, 和对方的分数
     myscore = 0
     comscore = 0
+    #存储上一个frame的状态x
+    prev_x = None
+    # 这一小的回合接收了多少次参数
+    ober_num = 0
+    #这一局的reward合计
+    reward_sum = 0
+    #记录所有的输入状态, 所有的隐藏状态, logits, 所有奖励
+    xs, hs, dlogps, drs = [], [], [], []
+    while not done:
+        if render:
+            # 显示画面
+            env.render()
+        ober_num += 1
+        # 对观测值进行预处理，将网络输入设置为不同图像, 即环境状态state， observation是原始画面
+        cur_x = observation_extract(observation)
+        # 经过简单处理后的的环境状态cur_x，x是变化的画面的状态
+        x = cur_x - prev_x if prev_x is not None else np.zeros(D)
+        # 记录一下上一个状态
+        prev_x = cur_x
+        # 前向策略网络并根据返回的概率对操作进行采样
+        aprob, h = policy_forward(x)
+        # 根据计算得出的概率，判断我们要采取的行动
+        # 如果不是测试，是训练，那么我们加入一个随机数，即探索和利用中的探索的概念, 2代表右移，3代表左移
+        action = 2 if np.random.uniform() < aprob else 3  # roll the dice!
+        # 记录各种中间状态，需要反向传播
+        # 观察状态 observation
+        xs.append(x)
+        # 隐藏状态
+        hs.append(h)
+        # 定义一个label
+        y = 1 if action == 2 else 0  # a "fake label"
+        # 记录下采取行的的概率
+        dlogps.append(
+            y - aprob)  # grad that encourages the action that was taken to be taken (see http://cs231n.github.io/neural-networks-2/#losses if confused)
+        # 把下一步要采取的行动提交给环境，例如这里action是3， 然后得到奖励和环境的观察结果
+        observation, reward, done, info = env.step(action)
+        # 累积奖励
+        reward_sum += reward
+        # 累积奖励记录下, 记录奖励
+        drs.append(reward)
+        # reward 不等于0，这里等于1或-1，表示得了1分或者输掉1分，游戏结束了， 一个小的回合
+        if reward != 0:
+            if reward == -1:
+                # 对方+1分
+                comscore += 1
+            else:
+                myscore += 1
+            if verbose:
+                print(f"第{myscore + comscore}次小回合，进行了{ober_num}次输入图像,分出了小的回合胜负, 奖励是: {reward}, 当前我方分数是{myscore},对方分数是{comscore}")
+            # 重置下这个小的回合的接收图像次数
+            ober_num = 0
+    # 将本局的所有输入，隐藏状态，动作梯度和奖励堆叠在一起， 所有的形状是不同的
+    # 所有的输入状态， shape, (5896, 6400)，  (8641, 6400)
+    epx = np.vstack(xs)
+    # 所有的隐藏状态, shape, (5896, 200)
+    eph = np.vstack(hs)
+    # 所有的logits, shape (5896, 1)
+    epdlogp = np.vstack(dlogps)
+    # 所有的奖励, (5896, 1),   (8641, 1)
+    epr = np.vstack(drs)
+    return epx, eph, epdlogp, epr, reward_sum, myscore, comscore
+
+def do_train(verbose=False):
+    grad_buffer = {k: np.zeros_like(v) for k, v in model.items()}  # 更新在一个批次中添加梯度的缓冲区
+    rmsprop_cache = {k: np.zeros_like(v) for k, v in model.items()}  # rmsprop memory
+    observation = env.reset()
+    running_reward = None
     for e in range(epoch):
         print(f"第{e}个epoch")
+        #我方的胜利次数统计
+        win = 0
         for b in range(batch_size):
-            while True:
-                if render:
-                    # 显示画面
-                    env.render()
-                ober_num += 1
-                # 对观测值进行预处理，将网络输入设置为不同图像, 即环境状态state， observation是原始画面
-                cur_x = observation_extract(observation)
-                # 经过简单处理后的的环境状态cur_x，x是变化的画面的状态
-                x = cur_x - prev_x if prev_x is not None else np.zeros(D)
-                # 记录一下上一个状态
-                prev_x = cur_x
+            # 整个游戏，即一次游戏结束，谁先达到21分，谁胜利
+            b += 1
+            print(f"第{b}局开始:")
+            epx, eph, epdlogp, epr, reward_sum, myscore, comscore = do_one_game(observation, verbose=verbose)
+            print(f"第{b}局结束:")
+            print(f"第{b}局的分数是: 我方总的奖励分数是{int(21 + np.sum(epr))}分, 当前我方分数是{myscore},对方分数是{comscore}")
+            if myscore > comscore:
+                win +=1
+            # 计算折价奖励
+            discounted_epr = discount_rewards(epr)
+            # 归一化， 将奖励标准化为unit normal（帮助控制梯度估计量方差)
+            discounted_epr -= np.mean(discounted_epr)
+            discounted_epr /= np.std(discounted_epr)
+            # 利用梯度, logits归一化, epdlogp shape (5448, 1), discounted_epr shape (5448, 1)
+            epdlogp *= discounted_epr
+            # grad {'W1':dW1, 'W2':dW2}, w1和w2参数
+            grad = policy_backward(eph, epdlogp, epx)
+            # 梯度累积, model 是字典, 里面有 model['W1'] 和model['W2'] 2个参数
+            for k in model:
+                # k等于 'W1'或 'W2', 梯度累积, 先不更新参数，先累加起来，类似huggface 的 transformers的accumuate的参数
+                grad_buffer[k] += grad[k]
+            # 计算这一次的奖励,第一次时running_reward为None，running_reward就是reward_sum
+            running_reward = reward_sum if running_reward is None else running_reward * 0.99 + reward_sum * 0.01
+            if verbose:
+                print('重置环境 env. 这局的奖励总共是 %f. 运行的奖励是: %f' % (reward_sum, running_reward))
+            # 重置env
+            observation = env.reset()
+        print(f"这个batch结束，我方胜利{win}次，敌方胜利{batch_size-win}次，开始更新参数")
+        # 每batch_size回合执行rmsprop参数更新，优化器,，进行一次参数更新
+        for k, v in model.items():
+            # 获取累积的梯度, k等于 'W1'或 'W2', v是对应的参数
+            g = grad_buffer[k]  # gradient
+            # 利用优化器更新和梯度更新模型参数
+            rmsprop_cache[k] = decay_rate * rmsprop_cache[k] + (1 - decay_rate) * g ** 2
+            #更新参数
+            model[k] -= learning_rate * g / (np.sqrt(rmsprop_cache[k]) + 1e-5)
+            # 重置批次梯度缓冲区
+            grad_buffer[k] = np.zeros_like(v)
+        if epoch % 2 == 0:
+            print(f"第{e}个epoch结束，完成了{batch_size}局，保存模型")
+            pickle.dump(model, open(save_file, 'wb'))
 
-                # 前向策略网络并根据返回的概率对操作进行采样
-                aprob, h = policy_forward(x)
-                # 根据计算得出的概率，判断我们要采取的行动
-                if test == True:
-                    action = 2 if aprob > 0.5 else 3
-                else:
-                    # 如果不是测试，是训练，那么我们加入一个随机数，即探索和利用中的探索的概念
-                    action = 2 if np.random.uniform() < aprob else 3  # roll the dice!
-
-                # 记录各种中间状态，需要反向传播
-                # 观察状态 observation
-                xs.append(x)
-                # 隐藏状态
-                hs.append(h)
-                # 定义一个label
-                y = 1 if action == 2 else 0  # a "fake label"
-                # 记录下采取行的的概率
-                dlogps.append(
-                    y - aprob)  # grad that encourages the action that was taken to be taken (see http://cs231n.github.io/neural-networks-2/#losses if confused)
-
-                # 把下一步要采取的行动提交给环境，例如这里action是3， 然后得到奖励和环境的观察结果
-                observation, reward, done, info = env.step(action)
-                # 累积奖励
-                reward_sum += reward
-                # 累积奖励记录下, 记录奖励
-                drs.append(reward)
-                # 整个游戏，即一次游戏结束，谁先达到21分，谁胜利
-                if done:
-                    episode_number += 1
-                    # 将本局的所有输入，隐藏状态，动作梯度和奖励堆叠在一起， 所有的形状是不同的
-                    # 所有的输入状态， shape, (5896, 6400)，  (8641, 6400)
-                    epx = np.vstack(xs)
-                    # 所有的隐藏状态, shape, (5896, 200)
-                    eph = np.vstack(hs)
-                    # 所有的logits, shape (5896, 1)
-                    epdlogp = np.vstack(dlogps)
-                    # 所有的奖励, (5896, 1),   (8641, 1)
-                    epr = np.vstack(drs)
-                    print(f"第{episode_number}回合的分数是: 我方总的奖励分数是{int(21 + np.sum(epr))}分, 当前我方分数是{myscore},对方分数是{comscore}")
-                    # 重置下分数
-                    myscore, comscore = 0, 0
-                    # 重置这一回合的累积的变量
-                    xs, hs, dlogps, drs = [], [], [], []
-                    # 反向传播计算折价奖励
-                    discounted_epr = discount_rewards(epr)
-                    # 归一化， 将奖励标准化为unit normal（帮助控制梯度估计量方差)
-                    discounted_epr -= np.mean(discounted_epr)
-                    discounted_epr /= np.std(discounted_epr)
-                    # 利用梯度, logits归一化, epdlogp shape (5448, 1), discounted_epr shape (5448, 1)
-                    epdlogp *= discounted_epr
-                    # grad {'W1':dW1, 'W2':dW2}, w1和w2参数
-                    grad = policy_backward(eph, epdlogp, epx)
-                    # 梯度累积, model 是字典, 里面有 model['W1'] 和model['W2'] 2个参数
-                    for k in model:
-                        # k等于 'W1'或 'W2', 梯度累积, 先不更新参数，先累加起来，类似huggface 的 transformers的accumuate的参数
-                        grad_buffer[k] += grad[k]
-                    # 每batch_size回合执行rmsprop参数更新，优化器,，进行一次参数更新
-                    if test is False:
-                        for k, v in model.items():
-                            # 获取累积的梯度, k等于 'W1'或 'W2', v是对应的参数
-                            g = grad_buffer[k]  # gradient
-                            # 利用优化器更新和梯度更新模型参数
-                            rmsprop_cache[k] = decay_rate * rmsprop_cache[k] + (1 - decay_rate) * g ** 2
-                            model[k] += learning_rate * g / (np.sqrt(rmsprop_cache[k]) + 1e-5)
-                            # 重置批次梯度缓冲区
-                            grad_buffer[k] = np.zeros_like(v)
-
-                    # 计算这一次的奖励,第一次时running_reward为None，running_reward就是reward_sum
-                    running_reward = reward_sum if running_reward is None else running_reward * 0.99 + reward_sum * 0.01
-                    print('重置环境 env. 这一回合的奖励总共是 %f. 运行的奖励是: %f' % (reward_sum, running_reward))
-                    if episode_number % 100 == 0:
-                        print(f"第{episode_number}回合结束，保存模型")
-                        pickle.dump(model, open(save_file, 'wb'))
-                    reward_sum = 0
-                    # 重置env
-                    observation = env.reset()
-                    prev_x = None
-                    break
-
-                # reward 不等于0，这里等于1或-1，表示得了1分或者输掉1分，游戏结束了， 一个小的回合
-                if reward != 0:
-                    if reward == -1:
-                        # 对方+1分
-                        comscore += 1
-                    else:
-                        myscore += 1
-                    print(
-                        f"第{episode_number}个大回合,第{myscore + comscore}次小回合，进行了{ober_num}次输入图像,分出了小的回合胜负, 奖励是: {reward}, 当前我方分数是{myscore},对方分数是{comscore}")
-                    # 重置下这个小的回合的接收图像次数
-                    ober_num = 0
-
-def do_test():
+def do_test(verbose=False):
     """
     测试一局游戏，谁先到21分，谁赢
     :return:
@@ -282,33 +292,45 @@ def do_test():
                 comscore += 1
             else:
                 myscore += 1
-            print(
-                f"第{myscore + comscore}次小回合，进行了{ober_num}次输入图像,分出了小的回合胜负, 奖励是: {reward}, 当前我方分数是{myscore},对方分数是{comscore}")
+            if verbose:
+                print(f"第{myscore + comscore}次小回合，进行了{ober_num}次输入图像,分出了小的回合胜负, 奖励是: {reward}, 当前我方分数是{myscore},对方分数是{comscore}")
             # 重置下这个小的回合的接收图像次数
             ober_num = 0
     if myscore > comscore:
         print(f"我赢了")
+        return True
     else:
         print(f"电脑赢了")
+        return False
+
+
+def test_batch(num):
+    mywin = 0
+    for n in range(num):
+        result = do_test()
+        if result:
+            mywin +=1
+    print(f"进行了{num}轮比赛，我赢了{mywin}次，电脑赢了{num-mywin}次")
 
 
 if __name__ == '__main__':
     # 超参数列表
     H = 200  # 隐层神经元数
     D = 80 * 80  # input dimensionality: 80x80 grid， 模型的参数的维度
-    batch_size = 10  #更新一次参数
+    batch_size = 6  #更新一次参数
     epoch = 4
     learning_rate = 1e-4
     gamma = 0.99  # 奖励折扣系数
     decay_rate = 0.99  # 衰减因子 RMSProp leaky sum of grad^2
     resume = True  # 从先前的checkpoint恢复？
-    test = False  # 测试模式，闭市epsilon-greedy和渲染场景图画, 还是训练模式，训练模式，会更新模型参数
+    test = True  # 测试模式，闭市epsilon-greedy和渲染场景图画, 还是训练模式，训练模式，会更新模型参数
     save_file = 'pong_model_bolei.p'
     render = True  # 是否显示游戏的图像界面
+    verbose = False #显示日志
     model = initial_model(save_file, resume)
-    
-    env = initial_env()
+    env = initial_env(verbose=verbose)
     if test:
-        do_test()
+        # do_test()
+        test_batch(6)
     else:
-        do_train()
+        do_train(verbose)
