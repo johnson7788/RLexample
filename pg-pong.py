@@ -4,7 +4,7 @@ import numpy as np
 import pickle
 import gym
 
-# hyperparameters
+#超参数列表
 H = 200 # 隐层神经元数
 batch_size = 10 # 每有几个回合可以进行参数更新？
 learning_rate = 1e-4
@@ -89,7 +89,12 @@ def policy_forward(x):
   return p, h
 
 def policy_backward(eph, epdlogp):
-  """ backward pass. (eph is array of intermediate hidden states) """
+  """
+   向后传递。 （eph是中间隐藏状态的数组
+  :param eph:
+  :param epdlogp:
+  :return:
+  """
   dW2 = np.dot(eph.T, epdlogp).ravel()
   dh = np.outer(epdlogp, model['W2'])
   dh[eph <= 0] = 0 # backpro prelu
@@ -177,29 +182,32 @@ while True:
     #归一化， 将奖励标准化为unit normal（帮助控制梯度估计量方差)
     discounted_epr -= np.mean(discounted_epr)
     discounted_epr /= np.std(discounted_epr)
-
-    epdlogp *= discounted_epr # modulate the gradient with advantage (PG magic happens right here.)
+    # 利用梯度
+    epdlogp *= discounted_epr
     grad = policy_backward(eph, epdlogp)
-    for k in model: grad_buffer[k] += grad[k] # accumulate grad over batch
-
-    # perform rmsprop parameter update every batch_size episodes
+    #梯度累积
+    for k in model:
+      grad_buffer[k] += grad[k]
+    # 每batch_size回合执行rmsprop参数更新，优化器
     if episode_number % batch_size == 0 and test == False:
       for k,v in model.items():
         g = grad_buffer[k] # gradient
         rmsprop_cache[k] = decay_rate * rmsprop_cache[k] + (1 - decay_rate) * g**2
         model[k] += learning_rate * g / (np.sqrt(rmsprop_cache[k]) + 1e-5)
-        grad_buffer[k] = np.zeros_like(v) # reset batch gradient buffer
+        # 重置批次梯度缓冲区
+        grad_buffer[k] = np.zeros_like(v)
 
     # boring book-keeping
     running_reward = reward_sum if running_reward is None else running_reward * 0.99 + reward_sum * 0.01
     print('resetting env. episode reward total was %f. running mean: %f' % (reward_sum, running_reward))
     if episode_number % 100 == 0: pickle.dump(model, open(save_file, 'wb'))
     reward_sum = 0
-    observation = env.reset() # reset env
+    #重置env
+    observation = env.reset()
     prev_x = None
 
   #reward 不等于0，这里等于1或-1，表示得了1分或者输掉1分，游戏结束了， 一个小的回合
-  if reward != 0: # Pong has either +1 or -1 reward exactly when game ends.
+  if reward != 0:
     if reward == -1:
       #对方+1分
       comscore +=1
