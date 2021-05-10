@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Solving FrozenLake environment using Policy-Iteration.
 
@@ -64,16 +65,15 @@ def policy_iteration(env, gamma = 1.0):
         old_policy_v = compute_policy_v(env, policy, gamma)
         new_policy = extract_policy(old_policy_v, gamma)
         if (np.all(policy == new_policy)):
-            print ('Policy-Iteration converged at step %d.' %(i+1))
+            print ('策略迭代收敛, 在迭代%d次后收敛.' %(i+1))
             break
         policy = new_policy
     return policy
 
 if __name__ == '__main__':
-
     env_name  = 'FrozenLake-v0' # 'FrozenLake8x8-v0'
     env = gym.make(env_name)
-
+    #直接找最佳策略
     optimal_policy = policy_iteration(env, gamma = 1.0)
     scores = evaluate_policy(env, optimal_policy, gamma = 1.0)
-    print('Average scores = ', np.mean(scores))
+    print('这个策略的平均分数是: ', np.mean(scores))
